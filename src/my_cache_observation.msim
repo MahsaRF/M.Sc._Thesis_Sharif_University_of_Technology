@@ -1,0 +1,152 @@
+#include "caches.msim"
+
+module my_cache extends set_associative:
+
+definitions
+//-------------------------------------------------------
+	uint32 max_cycle = 0;
+	uint32 ipoc_duration[100] = {0};
+	int ipoc_number = 0;
+//--------------------------------------------------------
+	uint64 total_cache_writes = 0;
+	uint64 total_cache_reads = 0;
+//----------------------------------------------------------	
+architecture	
+	record set[number_of_sets] merged
+		record block[associativity] merged
+//-----------------------------------------------------------
+			uint64 read_counter=0;
+			uint64 write_counter=0;	
+//-----------------------------------------------------------		
+		end;
+	end;
+	
+implementation 
+//***************************************************************    read_access    ************************************************************
+	
+	function read_access(_address addr): _data {
+		trace("reading data from %s at %llX ...", name, addr);
+		int set_idx = addr@set;
+		find(addr);
+		for(int k=0;k<associativity ;k++)
+		{
+			set[set_idx].block[k].counter++;
+		}
+		set[set_idx].block[block_index].counter = 0;
+//-----------------------------------------------------------------------------------------------
+//		rw_counter[addr@set ,block_index, 1 ]++;
+		total_cache_reads++;
+		set[addr@set].block[block_index].read_counter++;
+//-------------------------------------------------------------------------------------------------------
+		return set[set_idx].block[block_index].word[addr@word];
+	}
+	
+//***************************************************************    write_access    ************************************************************
+
+	procedure write_access(_address addr, _data d) {
+		trace("writing data on %s (%.02x) at %llX ...\n", name, d, addr);
+		whenever(use_coherency) {
+			if (access_type == ttDataWrite) {
+				dir.broadcast_state(addr, INVALID);
+				dir.set_state(addr, cache_index, MODIFIED);	
+			}
+		}
+		find(addr);
+		int set_idx = addr@set;
+		for(int k=0;k<associativity ;k++) {
+			set[set_idx].block[k].counter++;
+		}
+		set[set_idx].block[block_index].counter = 0;
+		set[set_idx].block[block_index].dirty = true;
+		set[set_idx].block[block_index].word[addr@word]=d;
+//-----------------------------------------------------------------------------------------------
+//		rw_counter[addr@set ,block_index, 2 ]++;
+		total_cache_writes++;
+		set[addr@set].block[block_index].write_counter++;
+		
+//------------------------------------------------------------------------------------------------------- 
+	}
+	
+//***************************************************************    read_block    ************************************************************
+
+	procedure read_block(_address addr, _data* dst_block, uint32 size) {
+		trace("reading a block of %ld word(s) from %s at %lld ...", size, name, addr);
+		int set_idx = addr@set;
+		for(int k=0;k<associativity ;k++) {
+			set[set_idx].block[k].counter++;
+		}
+		find(addr);
+		set[set_idx].block[block_index].counter = 0;
+		int start = addr@word;
+		for (int i=0; i<size; i++)
+			dst_block[i] = set[set_idx].block[block_index].word[i+start];
+		
+//-----------------------------------------------------------------------------------------------
+//		rw_counter[addr@set ,block_index, 1 ]++;
+		total_cache_reads++;
+		set[addr@set].block[block_index].read_counter++;
+//------------------------------------------------------------------------------------------------------- 
+	}
+	
+//***************************************************************    write_block    ************************************************************
+
+	procedure write_block(_address addr, _data* src_block, uint32 size) {
+		trace("writing a block of %d word(s) on %s at %llX ...\n", size, name, addr);
+		int set_idx = addr@set;
+		for(int k=0;k<associativity ;k++) {
+			set[set_idx].block[k].counter++;
+		}
+		find(addr);
+		set[set_idx].block[block_index].counter = 0;
+		int start = addr@word;
+		for (int i=0; i<size; i++)
+			set[set_idx].block[block_index].word[i] = src_block[i+start];
+		set[set_idx].block[block_index].dirty = true;
+		
+//-----------------------------------------------------------------------------------------------
+//		rw_counter[addr@set ,block_index, 2 ]++;
+		total_cache_writes++;
+		set[addr@set].block[block_index].write_counter++;
+//-------------------------------------------------------------------------------------------------------
+	}
+	
+//***************************************************************         report      ************************************************************
+
+	procedure report {
+		//long double total = number_of_misses+number_of_hits;
+		//if(total > 0)
+		//	printf("%s.hit-rate = %.2f%%\n", name, (float)((long double) number_of_hits/total*100));
+//--------------------------------------------------------------------------------------------------------------		
+		//printf("\n\n********************************************\n");
+		//printf("cache : %s \ntotal cache reads = %lld\ntotal cache writes = %lld\n",name, total_cache_reads, total_cache_writes);
+		//printf("\n\n\n\n********************************************\n");
+		// reporting number of writes in each set 
+		//printf("*****************    writes     *****************\n");
+		for(int k=0; k < number_of_sets ;k++) 
+		{	
+			//printf("\n\n\n\nAccess to set %d from %s --->\n", k, name);
+			printf("\n");
+			for(int l=0; l < associativity ;l++) 
+			{
+					//printf("  %lld/%lld   ", set[k].block[l].read_counter, set[k].block[l].write_counter);
+					printf("%lld ",set[k].block[l].write_counter);
+			}	
+		}
+		// reporting number of reads in each set 
+		//printf("\n\n*****************    reads     *****************\n");
+		for(int k=0; k < number_of_sets ;k++) 
+		{
+			//printf("\n\n\n\nAccess to set %d from %s --->\n", k, name);
+			printf("\n");
+			for(int l=0; l < associativity ;l++) 
+			{
+					printf("%lld ",set[k].block[l].read_counter);
+			}	
+		}
+//--------------------------------------------------------------------------------------------------------------		
+	}//end of report()
+	
+
+
+
+end;//end of my_cache

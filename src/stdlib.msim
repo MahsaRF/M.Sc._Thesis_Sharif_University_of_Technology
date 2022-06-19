@@ -1,0 +1,73 @@
+#ifndef STDLIB
+#define STDLIB
+
+module typical_system: 
+end;
+
+module typical_module: 
+definitions
+	uint64 read_hit=0, write_hit=0, read_miss=0, write_miss=0;
+implementation	
+	function contains(_address addr): bool {return true;}
+	procedure read_block(_address addr, _data* dst_block, uint32 size) {}
+	procedure write_block(_address addr, _data* src_block, uint32 size) {}
+	procedure set_data(_address addr, _data d) {}
+	function get_data(_address addr): _data {}
+	procedure replace(_address addr) {}
+	procedure print_block(_address addr) {}
+	function block_address(_address addr): _address {}
+end;
+
+module typical_core: 
+implementation
+	procedure process(message_t msg) serial
+	~latency(((msg.type == itBranch)?2:1)/frequency) {}
+	procedure set_data(_address addr, _data d) {}
+end;
+
+module typical_memory extends typical_module:
+end;
+
+module typical_cache extends typical_module:
+definitions
+	typical_module prev_level;
+	int cache_index = -1;
+end;
+
+/******* Useful Functions *******/
+
+char* display_number(double d, const char* unit) {
+	char* str = new char[128];
+	char dim = ' ';
+	if (d > 1e12) dim = 'T';
+	else if (d > 1e9) dim = 'G';
+	else if (d > 1e6) dim = 'M';
+	else if (d > 1e3) dim = 'K';
+	
+	d/=1000;
+	if (d < 1e-15) dim = 'f';
+	else if (d < 1e-12) dim = 'p';
+	else if (d < 1e-9) dim = 'n';
+	else if (d < 1e-6) dim = 'u';
+	else if (d < 1e-3) dim = 'm';
+	
+	switch(dim) {
+		case 'T': d /= 1e12; break;
+		case 'G': d /= 1e9; break;
+		case 'M': d /= 1e6; break;
+		case 'K': d /= 1e3; break;
+		case 'f': d *= 1e15; break;
+		case 'p': d *= 1e12; break;
+		case 'n': d *= 1e9; break;
+		case 'u': d *= 1e6; break;
+		case 'm': d *= 1e3; break;
+	}
+	d*=1000;
+	if(dim == ' ')
+		sprintf(str, "%.3f %s", d, unit);
+	else
+		sprintf(str, "%.3f %c%s", d, dim, unit);
+	return str;
+}
+
+#endif

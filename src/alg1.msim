@@ -1,0 +1,596 @@
+#include "stdlib.msim"
+#include "caches.msim"
+#include "main.msim"
+#include "directory.msim"
+#include "my_cache_alg12.msim"
+
+module system extends typical_system:
+parameters
+	number_of_cores initially 4;
+	memory_block_size initially 128;
+	cpu_transaction_size initially 32;
+definitions
+	submodule DIR extends directory:
+	specifications
+		number_of_cores is owner::number_of_cores;
+		block_size is cpu_transaction_size;
+	end;
+//--------------------------------- L1 -----------------------------
+submodule L1_Private_ICache extends set_associative:	
+specifications	
+	number_of_sets is 32;
+	associativity is 4;
+	block_size is cpu_transaction_size;
+	access_latency is 1ns;
+end;
+
+submodule L1_Private_DCache extends L1_Private_ICache:	
+specifications	
+	use_coherency is true;
+	access_latency is 1ns;
+	//low_access_latency is 1ns;
+	//high_access_latency is 1ns;
+end;
+//--------------------------------- L2 ----------------------------------
+
+submodule L2_Shared_Cache extends set_associative:
+specifications 
+	//number_of_sets is 128;
+	number_of_sets is 512;
+	//associativity is 8;
+	associativity is 4;
+	block_size is 64;
+	access_latency is 2ns;
+	//low_access_latency is 2ns;
+	//high_access_latency is 2ns;
+end;	
+//-------------------------------- L3 --------------------------------------
+
+submodule L3_Shared_Cache extends my_cache:
+specifications 
+	number_of_sets is 2^11;
+	associativity is 7;  // 8th block is reserved to keep a copy of LRblock DATA befor retention time is finished
+	block_size is memory_block_size;
+	//access_latency is 3ns;
+	low_access_latency is 3ns;
+	high_access_latency is 4ns;
+implementation
+//---------------------------------------- step --------------------------------------------
+	procedure step() 
+	{
+//---------------------------------------- for arc1   ---------------------------------------------------
+		if( strcmp(name,"L3") == 0 )
+		{
+			for(int m=0; m < num_epoch ;m++)  
+			{	
+				max_cycle = cycle();
+				//printf("\n************   epoch_duration[m] befor if %d **************",epoch_duration[m]);
+				// first 10 mill cycle deleted --> 10 mill = 1 mill * 10
+				//if( max_cycle >(1000000 * (m + 10)) && max_cycle < (1000000 * (m + 11)))
+				if( max_cycle >(epoch_size_cycle * (m + warmUp_epochs)) && max_cycle < (epoch_size_cycle * (m + warmUp_epochs + 1)))
+				{
+//--------------------------------------------- check at start of epoch duration --------------------------										
+
+					if(start_end_epoch_flags[m][1] == 0)
+					{
+						if(num_LRblockSet == 1)
+						{
+							for(int k=0; k<num_set ;k++) 
+							{
+								if(set[k].first_sat_block_in_set_flag == 1 )
+								{	
+									// agar epoch e ghabli tamam shode va first_sat_block_in_set_flag=1 baghi mande bashad yani 
+									//LR block lock bude ast(tavasote block digari az hamin set) va hala ba etmame epoch mitavan first sat block ra be LRblock redirect kard 
+									// alave bar in hatman first redirection e marbut be first saturate block anjam nashode ta entehaye epoch pas in IF hamishe TRUE ast!
+									//1) set[k].set_LRblock1_lock == 1
+									//2) set[k].first_intraSet_redirect_done == 0
+									//3) set[k].set_LRblock1_currSet == 1
+									//emkan nadare lock budane LRblock be elate merge bashe
+									if(set[k].set_LRblock1_lock == 1 && set[k].first_intraSet_redirect_done == 0 && set[k].set_LRblock1_currSet == 1) 
+									{
+										//swap the tags of first sat block and LRblock1 in set k ! ( dar entehaye epoch duration ke hamun ebtedaye next epoch duration ast)
+										set[k].block[set[k].saturated_w_block1_blockindex].tag = set[k].block[0].tag;
+										set[k].block[0].tag = set[k].saturated_w_block1_tag;
+										
+										//LRblock1 is used
+										set[k].set_LRblock1_lock = 1; 
+										set[k].set_LRblock1_currSet = 1; //LR block contains a block of the current set..this recent redirection to LRblock
+										set[k].set_LRblock1_otherSet = 0;//LR block contains a block of the another source set
+										set[k].first_intraSet_redirect_done = 0;//this flag should set during epoch interval and is used at end of epoch. 
+										//in other words,checked at start of next epoch similar 2 this IF statement
+									}
+								}
+								// agar dar entehaye epoch first sat flag 0 bashad 2 halat darad
+								//else
+								if(set[k].first_sat_block_in_set_flag == 0 )
+								{	
+									//1) dar tule epoch saturate block nadashtim pas redirection ii ham nadashte im 
+									//    set[k].first_intraSet_redirect_done = 0 
+									//    bayas shavad: set[k].set_LRblock1_lock = 0
+									if(set[k].first_intraSet_redirect_done == 0) 
+									{	
+										//LRblock1 is free for next epoch
+										set[k].set_LRblock1_lock = 0;								
+										set[k].set_LRblock1_currSet = 0; //LR block does not contain a block of the current set
+										set[k].set_LRblock1_otherSet = 0;//LR block does not contain a block of the another source set
+										set[k].first_intraSet_redirect_done = 0;//this flag should set during epoch interval and is used at end of epoch. 
+										//in other words,checked at start of next epoch similar 2 this IF statement...finally bayad 0 shavad
+									}
+									//else
+									//be elate free budane LRblock redirection darune set belaafase anjam shode pas bayad lock shavad			
+									//2) dar tule epoch saturate block dashtim vali LR block ya free bude ya male ye set e dige bude va shekaste va redirection anjam shode!
+									//  SO  set[k].first_intraSet_redirect_done == 1
+									//2-1) set[k].set_LRblock1_lock = 0  		// LRblock free bude hengam saturate shodane block
+									//2-2) set[k].set_LRblock1_currSet = 1  	// merge shekaste va LRblock free shode ast belafasele
+									if(set[k].first_intraSet_redirect_done == 1)  
+									{	
+										//LRblock1 is used
+										set[k].set_LRblock1_lock = 1; 
+										set[k].set_LRblock1_currSet = 1; //LR block contains a block of the current set
+										set[k].set_LRblock1_otherSet = 0;//LR block contains a block of the another source set
+										set[k].first_intraSet_redirect_done = 0;//this flag should set during epoch interval and is used at end of epoch. 
+										//in other words,checked at start of next epoch similar 2 this IF statement...finally bayad 0 shavad
+									}
+								//--------------------------------------------------------------------------------------------	
+								//reset saturating counters in blocks and sets at end of epoch duration or start of next epoch
+								//--------------------------------------------------------------------------------------------
+								//reset epoch counters in block
+								for(int l=0; l < num_block ;l++) 
+								{
+									set[k].block[l].block_write_sat_counter = 0 ;
+									set[k].block[l].block_read_sat_counter = 0 ;
+								}
+								//reset epoch counters in set 
+								set[k].set_write_counter_epoch = 0; 
+								set[k].set_read_counter_epoch = 0;
+								set[k].set_saturated_w_blocks_epoch = 0;
+								set[k].set_saturated_w_LRblocks_epoch = 0;
+								
+								//reset saturating flags
+								set[k].first_sat_block_in_set_flag = 0;
+								set[k].second_sat_block_in_set_flag = 0;
+								
+								//reset saturating block index in set in this finished epoch 
+								set[k].saturated_w_block1_blockindex = num_block + 1;
+								set[k].saturated_w_block2_blockindex = num_block + 1;
+								
+								//set[k].first_interSet_redirect_done = 0; // if we want to break the redirection/merge to ather set at the end of epoch duretion this line should be checked
+								set[k].first_intraSet_redirect_done = 0;
+								
+								//set[k].LRblock_first_update_after_merge = 0;
+								
+								}//end if
+							}//end for 
+						}//end if(number_LRblocks_set == 1)	
+						start_end_epoch_flags[m][1] = 1; // just at start of epoch duration do the redirection to LRblocks and reset flag and counters
+					}//	end if(start_end_epoch_flags[m][1] == 0)
+					
+//--------------------------------------------- check any time during epoch duration ------- breaking a merge -------------------										
+					for(int k=0; k<num_set ;k++) 
+					{
+						if(num_LRblockSet == 1)
+						{	
+							if(set[k].dest_set_get_hot_flag == 1) //if destination set get hot, break the merge
+							{
+								//select LRU block in source/current set for write back the redirected block in destination set in current/source set  
+								int index = -1;
+								uint32 max_LRUcount = 0;
+								for( int j=0; j<num_block; j++) 
+								{
+									if(set[k].block[j].counter>max_LRUcount) 
+									{
+										index = j;
+										max_LRUcount = set[k].block[j].counter;
+									}
+								}
+								//read redirected LRblock from destination set/block and write in LRU block that would be selected from source(COPY)
+								//set[k].block[index].word = set[set[k].dest_set_index_1].block[0].word;
+								for (int i=0; i<block_size; i++) 
+								{
+									set[k].block[index].word[i] = set[set[k].dest_set_index_1].block[0].word[i];
+								}
+
+								set[k].block[index].tag = set[set[k].dest_set_index_1].block[0].tag;
+								//for (int i=0; i<block_size; i++) 
+								//{
+									//set[k].block[index].tag[i] = set[set[k].dest_set_index_1].block[0].tag[i];
+								//}
+								//------------------------- necessory??? --------------------------------------
+								
+								set[k].block[index].valid = true; // this should  be selected az a victom in search function to improve the hitrate of cache
+								set[k].block[index].counter = 0; // this should be the min counter and do not be selected az a victom in search function
+								//------------------------- necessory??? --------------------------------------
+									
+								
+								
+								//changes in destination set
+								
+								set[set[k].dest_set_index_1].set_LRblock1_lock = 0; //LRblock1 of destination set is free
+								set[set[k].dest_set_index_1].source_set_index_1 = set[k].dest_set_index_1; //poits to current set and means that there in no merge 
+								set[set[k].dest_set_index_1].set_LRblock1_currSet = 0;
+								set[set[k].dest_set_index_1].set_LRblock1_otherSet = 0;
+								
+								//set[set[k].dest_set_index_1].LRblock_first_update_after_merge = 0 ; //this flag should be set after the merge is installed and first write done in LRblock
+								
+								
+								//changes in current/source set
+								
+								set[k].source_set_index_1 = k;                           //poits to current set and means that there is no merge  *** this is not necessary !
+								set[k].dest_set_index_1 = k;                             //poits to current set and means that there is no merge
+								mapTable[k][set[k].saturated_w_block2_blockindex] = k;   //poits to current set and means that there is no merge
+								mapTable[k][associativity + 1] = 0;                      //poits to current set and means that there is no merge
+								mapTable[k][associativity + 2] = 0;                      //  *** this is not necessary !
+								set[k].first_interSet_redirect_done = 0;
+								set[k].write_on_dest_set = 0;
+								set[k].read_from_dest_set = 0;
+							}
+							/*
+							if(set[k].dest_set_get_hot_flag_2 == 1) //if destination set get hot, break the merge
+							{
+								//changes in destination set
+								set[set[k].dest_set_index_2].set_LRblock1_lock = 0; //LRblock1 of destination set is free
+								set[set[k].dest_set_index_2].source_set_index_1 = set[k].dest_set_index_2; //poits to current set and means that there in no merge 
+								set[set[k].dest_set_index_2].set_LRblock1_currSet = 0;
+								set[set[k].dest_set_index_2].set_LRblock1_otherSet = 0;
+								//changes in current/source set
+								set[k].source_set_index_1 = k;                           //poits to current set and means that there in no merge  *** this is not necessary !
+								set[k].dest_set_index_2 = k;                             //poits to current set and means that there in no merge
+								mapTable[k][set[k].saturated_w_block1_blockindex] = k;   //poits to current set and means that there in no merge
+								mapTable[k][associativity + 1] = 0;                      //poits to current set and means that there in no merge
+								mapTable[k][associativity + 2] = 0;              //  *** this is not necessary !
+							}
+							**/
+						}
+						/*
+						if(number_LRblocks_set == 2)
+						{
+							//changes in destination set
+								set[set[k].dest_set_index_1].set_LRblock1_lock = 0; //LRblock1 of destination set is free
+								set[set[k].dest_set_index_1].source_set_index_1 = set[k].dest_set_index_1; //poits to current set and means that there in no merge 
+								set[set[k].dest_set_index_1].set_LRblock1_currSet = 0;
+								set[set[k].dest_set_index_1].set_LRblock1_otherSet = 0;
+								//changes in current/source set
+								set[k].source_set_index_1 = k;                           //poits to current set and means that there in no merge  *** this is not necessary !
+								set[k].dest_set_index_1 = k;                             //poits to current set and means that there in no merge
+								mapTable[k][set[k].saturated_w_block1_blockindex] = k;   //poits to current set and means that there in no merge
+								mapTable[k][associativity + 1] = 0;                      //poits to current set and means that there in no merge
+								mapTable[k][associativity + 2] = 0;              //  *** this is not necessary !
+							
+							if(set[k].dest_set_get_hot_flag_2 == 1) //if destination set get hot, break the merge
+							{
+								//changes in destination set
+								set[set[k].dest_set_index_2].set_LRblock1_lock = 0; //LRblock1 of destination set is free
+								set[set[k].dest_set_index_2].source_set_index_1 = set[k].dest_set_index_2; //poits to current set and means that there in no merge 
+								set[set[k].dest_set_index_2].set_LRblock1_currSet = 0;
+								set[set[k].dest_set_index_2].set_LRblock1_otherSet = 0;
+								//changes in current/source set
+								set[k].source_set_index_1 = k;                           //poits to current set and means that there in no merge  *** this is not necessary !
+								set[k].dest_set_index_2 = k;                             //poits to current set and means that there in no merge
+								mapTable[k][set[k].saturated_w_block1_blockindex] = k;   //poits to current set and means that there in no merge
+								mapTable[k][associativity + 1] = 0;                      //poits to current set and means that there in no merge
+								mapTable[k][associativity + 2] = 0;              //  *** this is not necessary !
+							}
+						}	
+						**/
+					}
+//------- check any time during epoch duration ------- redirection to other sets (merge) or immediate redirection of first saturated block to LR block				
+					
+					if(start_end_epoch_flags[m][2] == 0)
+					{
+						if(num_LRblockSet == 1)
+						{
+							for(int k=0; k<num_set ;k++) 
+							{	
+								if(set[k].first_sat_block_in_set_flag == 1 && set[k].first_intraSet_redirect_done == 0)
+								{	
+									// one of these 3 IF state will be correct!
+									
+									if(set[k].set_LRblock1_lock == 0 ) //if LRblock1 is free (no other saturated block is redirected to LRblock1 so we can redirect first sat block to LRblock immediately!
+									{
+										//swap the tags of first sat block and LRblock1 in set k ! ( dar entehaye epoch duration ke hamun ebtedaye next epoch duration ast)
+										set[k].block[set[k].saturated_w_block1_blockindex].tag = set[k].block[0].tag;
+										set[k].block[0].tag = set[k].saturated_w_block1_tag;
+										
+										//LRblock1 is used
+										set[k].set_LRblock1_lock = 1; 
+										set[k].set_LRblock1_currSet = 1; //LR block contains a block of the current set
+										set[k].set_LRblock1_otherSet = 0;
+										set[k].first_intraSet_redirect_done = 1;
+										
+										//reset saturating flags
+										set[k].first_sat_block_in_set_flag = 0;
+									}	
+									if(set[k].set_LRblock1_lock == 1 && set[k].set_LRblock1_currSet == 1 && set[k].first_intraSet_redirect_done == 0) 
+									{
+										// agar LRblock lock ast tavasote block ii az hamin set, bayad ta entehaye epoch sabr kard
+										set[k].first_sat_block_in_set_flag = 1;
+									}
+									if(set[k].set_LRblock1_lock == 1 && set[k].set_LRblock1_otherSet == 1 && set[k].first_intraSet_redirect_done == 0) //if LRblock1 is free (no other saturated block is redirected to LRblock1 so we can redirect first sat block to LRblock immediately!
+									{
+										// agar LRblock lock ast(merge destination) tavasote block ii az set digar,
+										// bayad immediately merge shekaste shode va redirection anjam shavad! ke in 
+										//automatic anjam shode dar FOR e marbut be shekastane merge va lazem nist dar vaghe!!
+										set[set[k].source_set_index_1].dest_set_get_hot_flag = 1;
+										set[k].first_sat_block_in_set_flag = 1;
+									}
+								}
+							}//end for(int k=0; k<num_set ;k++)
+							
+//------------------------------------------------------------  Redirection 2  INterSET -------------------
+							for(int k=0; k<num_set ;k++) 
+							{
+								if(set[k].second_sat_block_in_set_flag == 1 && set[k].first_interSet_redirect_done == 0)
+								{
+									/**
+									big=a[0];
+									for(i=1;i<size;i++)
+									{
+										if(big<a[i])
+											big=a[i];
+									}**/
+									//find best candidate for merge destination set
+									min_dest_set_param1 = set[1].set_write_counter_total;
+									min_dest_set_param2 = set[1].set_saturated_w_LRblocks_total;
+									//min_dest_set_param3 = set[1].set_saturated_w_blocks_total;
+									for(int i=0; i<num_set ;i++) 
+									{
+										//if(selected_dest_set >= set[i].set_saturated_w_blocks_total && (set[i].set_LRblock1_lock == 0 || set[i].set_LRblock2_lock == 0)
+										if(min_dest_set_param1 > set[i].set_write_counter_total && min_dest_set_param2 > set[i].set_saturated_w_LRblocks_total && set[i].set_LRblock1_lock == 0 && set[i].first_intraSet_redirect_done == 0 )
+										{	
+											min_dest_set_param1 = set[i].set_write_counter_total;
+											min_dest_set_param2 = set[i].set_saturated_w_LRblocks_total;
+											selected_dest_set_idx = i;
+										}
+									}
+									//change the current/source set
+									
+									//------------------------- necessory??? --------------------------------------
+									
+									set[k].block[set[k].saturated_w_block2_blockindex].valid = false; // this should  be selected az a victom in search function to improve the hitrate of cache
+									//set[k].block[set[k].saturated_w_block2_blockindex].counter = 0; // this should be the min counter and do not be selected az a victom in search function
+									//------------------------- necessory??? -------------------------------
+									 
+									mapTable[k][set[k].saturated_w_block2_blockindex] = selected_dest_set_idx;
+									mapTable[k][num_block+1] = 1; //this set is a merge source set
+									mapTable[k][num_block+2] = 0;
+									set[k].set_LRblock1_currSet = 1;  
+									set[k].set_LRblock1_otherSet = 0; 
+									
+									set[k].first_interSet_redirect_done = 1;
+				
+									//------------------------------   change in both source and destination sets!!  -------------------------------------------------------------------
+									//trace("copying block %d of set %lld of %s on %s ...", block_index, set_idx, name, prev_level.name);
+									//_address a = (set_idx << ($w)) + (set[set_idx].block[block_index].tag << ($d+$w));
+									//_data temp[block_size];
+									//read_block(a, temp, block_size);
+									//prev_level.write_block(a, temp, block_size);
+									//------------------------ OR ---------------------------------------------------
+									
+									//read from source set/block and write in destination LRblock (COPY)
+									//set[selected_dest_set_idx].block[0].word = set[k].block[set[k].saturated_w_block2_blockindex].word;
+									for (int i=0; i<block_size; i++) 
+									{
+										set[selected_dest_set_idx].block[0].word[i] = set[k].block[set[k].saturated_w_block2_blockindex].word[i];
+									}
+									set[selected_dest_set_idx].block[0].tag = set[k].block[set[k].saturated_w_block2_blockindex].tag;
+									
+									//------------------------- necessory??? --------------------------------------
+									set[selected_dest_set_idx].block[0].valid = true; // this should  be selected az a victom in search function to improve the hitrate of cache
+									set[selected_dest_set_idx].block[0].counter = 0; // this should be the min counter and do not be selected az a victom in search function
+									
+									
+									//set[k].block[set[k].saturated_w_block2_blockindex].valid = false;
+									//-------------------------------------------------------------------------------------------------
+									
+									//change the destination set of second saturated block
+									
+									if(set[selected_dest_set_idx].set_LRblock1_lock == 0)
+									{
+										set[selected_dest_set_idx].source_set_index_1 = k;
+										set[selected_dest_set_idx].set_LRblock1_currSet = 0;
+										set[selected_dest_set_idx].set_LRblock1_otherSet = 1;
+									/*
+									else
+										set[selected_dest_set_idx].source_set_index_2 = k;
+										set[selected_dest_set_idx].set_LRblock2_currSet = 0;
+										set[selected_dest_set_idx].set_LRblock2_otherSet = 1;
+									**/
+									}
+									
+									//set[selected_dest_set_idx].LRblock_first_update_after_merge = 0; //this flag should be set after the first write in LRblock of destination set
+									
+									//reset saturating flags
+									//set[k].first_sat_block_in_set_flag = 0;
+									set[k].second_sat_block_in_set_flag = 0;
+								
+									//start_end_epoch_flags[m][2] = 1; // just at start of epoch duration do the redirection tu LRblocks and reset flag and counters
+								
+								}
+							}//end for 
+						}//end if(number_LRblocks_set == 1)
+					}
+//---------------------------------------- for observation! ----- getting report at each epoch duration // my function ------------------------------
+						
+						epoch_number = epoch_number + 1;
+						//printf("\n\n******************************************************");
+						//printf("\n********");
+						//printf("\n***** number of writes in each set epoch %d  at cycle   %lld  ****",epoch_number, max_cycle);
+						//printf("\n********   epoch %d  at cycle   %d  **********",epoch_number, (1000 * (m + 1)));
+						//printf("\n********");
+						//printf("\n******************************************************\n");
+						//printf("\n\n\n\nAccess to %s --->\n", name);
+						report();
+						
+						//printf("\n************   after reset the write and redd counters  at epoch %d **************\n",epoch_number);
+						//report();
+						//printf("  %lld/%lld   ", set[k].block[l].read_counter, set[k].block[l].write_counter);
+						epoch_duration[m] = 1;
+						//for(int k=0; k < 20;k++) 
+						//{
+									//printf("  %lld/%lld   ", set[k].block[l].read_counter, set[k].block[l].write_counter);
+									//printf("%lld ",epoch_duration[k]);	
+						//}
+						//printf("\n************   epoch_duration[%d] %d **************",m,epoch_duration[m]);
+						
+					//}	
+				}
+			}//end for
+		}//end if L3
+//---------------------------------------- for observation! ----- getting report at each epoch duration // my function ------------------------------
+		/**
+		if( strcmp(name,"L3") == 0 )
+		{
+			for(int m=0; m < 100 ;m++) // first 10 mill cycle deleted --> 10 mill = 1 mill * 10 
+			{	
+				max_cycle = cycle();
+				//printf("\n************   epoch_duration[m] befor if %d **************",epoch_duration[m]);
+
+				if( max_cycle >(1000000 * (m + 10)) && max_cycle < (1000000 * (m + 11)) &&  epoch_duration[m] == 0 )
+				{
+					//if( strcmp(name,"L3_1") == 0 )			
+					//{
+						epoch_number = epoch_number + 1;
+						//printf("\n\n******************************************************");
+						//printf("\n********");
+						//printf("\n***** number of writes in each set epoch %d  at cycle   %lld  ****",epoch_number, max_cycle);
+						//printf("\n********   epoch %d  at cycle   %d  **********",epoch_number, (1000 * (m + 1)));
+						//printf("\n********");
+						//printf("\n******************************************************\n");
+						//printf("\n\n\n\nAccess to %s --->\n", name);
+						report();
+						for(int k=0; k < number_of_sets ;k++) 
+						{
+							for(int l=0; l < associativity ;l++) 
+							{
+								set[k].block[l].block_write_counter = 0 ;
+								set[k].block[l].block_read_counter = 0 ;
+							}
+						}
+						//printf("\n************   after reset the write and redd counters  at epoch %d **************\n",epoch_number);
+						//report();
+						//printf("  %lld/%lld   ", set[k].block[l].read_counter, set[k].block[l].write_counter);
+						epoch_duration[m] = 1;
+						//for(int k=0; k < 20;k++) 
+						//{
+									//printf("  %lld/%lld   ", set[k].block[l].read_counter, set[k].block[l].write_counter);
+									//printf("%lld ",epoch_duration[k]);	
+						//}
+						//printf("\n************   epoch_duration[%d] %d **************",m,epoch_duration[m]);
+						
+					//}	
+				}
+			}//end for
+		}//end if L3
+		
+//---------------------------------------- end my function -----------------------------------------------------			
+		**/
+	}//end step
+//------------------------- end step ----------------------------------------------
+end;// end submodule L3	
+
+//---------------------------- RAM ------------------------------------------
+
+submodule RAM extends main_memory:
+specifications
+	words_per_block is memory_block_size;
+end;
+
+//--------------------------------- core -------------------------------------	
+
+submodule core extends typical_core:
+parameters
+	fetch_latency = 1.19ns;
+	reordered_buffer_size = 4;
+definitions	
+	L1_Private_ICache icache;
+	L1_Private_DCache dcache;
+implementation 
+	procedure prefetch(message_t msg) 
+	~latency((sim_step%reordered_buffer_size==0)?fetch_latency:0) {
+		// multi-stage superpipeline: storing parallel instructions in ROB
+		_data tmp[4];
+		icache.read_block(msg.inst.physical_address, tmp, 4);
+	}
+	procedure process(message_t msg) serial ~latency(1*one_cycle) {}
+	procedure exec(message_t msg) serial ~latency(((msg.type == itBranch)?2:1)*one_cycle) {}
+	procedure report {
+		icache.report();
+		dcache.report();
+	}
+pass to prefetch;
+pass to process;
+pass to exec;
+pass data to dcache when message.type == itLoad || message.type == itStore;
+end;//end submodule core
+
+//--------------------------------------
+core P[number_of_cores]; 
+//L2_Shared_Cache L2_1, L2_2;
+L2_Shared_Cache L2;
+L3_Shared_Cache L3;
+RAM ram;
+DIR dir;
+//----------------------  topology  -------------------
+
+pass all to P[#i[0,number_of_cores-1]] when cpu_number == #i;
+topology
+//P[#i[0,number_of_cores/2-1]].icache.prev_level=P[#i].dcache.prev_level<-L2_1;
+P[#i[0,number_of_cores-1]].icache.prev_level=P[#i].dcache.prev_level<-L2;
+//P[#i[number_of_cores/2,number_of_cores-1]].icache.prev_level = P[#i].dcache.prev_level <- L2_2; 
+
+//L2_1.prev_level = L2_2.prev_level <- L3;
+L2.prev_level <- L3;
+L3.prev_level <- ram;
+P[#i[0,number_of_cores-1]].dcache.dir <- dir;
+dir.caches[#i[0,number_of_cores-1]] <- P[#i].dcache;	
+dir.caches[#i[0,number_of_cores-1]].cache_index <- #i;
+
+implementation 
+procedure report {
+	//for(int i=0; i<4; i++) {
+		//P[i].report();
+	//}
+	//L2_1.report();
+	//L2_2.report();
+	//L2.report();
+	L3.report();
+	//ram.report();
+	printf("CPI = %.02f\n", (double)cycle()/(sim_step-offset));
+	printf("cycle = %lld\n", cycle());
+	printf("unmatched = %lld\n", unmatched);
+	printf("total steps = %lld\n", (sim_step-offset));
+	printf("elapsed time = %s\n", display_number(elapsed_time(), "s"));
+	cout << "offset = " << offset << endl;
+	cout << "frequency = " << display_number(frequency, "Hz") << endl;
+}
+end;//end system
+
+
+double one_cycle=1;
+
+procedure initialize() 
+{
+	offset = total_steps/10;
+	frequency = 2.5GHz;
+	one_cycle = 0.999/frequency;
+	//-------------------------------- for arc1 ------------------------------------
+	for( int i=0 ; i < num_set ; i++)
+	{	
+		for( int j=0 ; j < num_block ; j++)
+		{
+			mapTable[i][j] = i; //at start no set has a merge destination set!
+		}
+		for( int j=num_block ; j < num_block+2 ; j++)
+		{
+			mapTable[i][j] = 0; //reset 2 flag for merge source and destination in each set!
+		}
+	}
+	for( int i=0 ; i < num_epoch ; i++)
+	{
+		for( int j=0 ; j < 3 ; j++)
+		{
+			start_end_epoch_flags[i][j] = 0;
+		}
+	}
+	//----------------------------------------------------------------------------
+}

@@ -1,0 +1,97 @@
+#include <iostream>
+
+using std::cout;
+using std::endl;
+
+int main()
+{
+	int counter = 1; // initialization
+	
+	while ( counter <= 10 ) { // repetition condition
+		cout << counter << endl;
+		++counter; // increment
+	}
+	return 0;
+}
+
+
+threshold = pow(2, saturatingCounterSize) / 2;
+
+
+if( strcmp(name,"L3") == 0 )
+			{
+				for(int m=0; m < 100 ;m++) // first 10 mill cycle deleted --> 10 mill = 1 mill * 10 
+				{	
+					max_cycle = cycle();
+					//printf("\n************   ipoc_duration[m] befor if %d **************",ipoc_duration[m]);
+
+					if( max_cycle >(1000000 * (m + 10)) && max_cycle < (1000000 * (m + 11)) &&  ipoc_duration[m] == 0 )
+					{
+						ipoc_number = ipoc_number + 1;
+						report();
+						for(int k=0; k < number_of_sets ;k++) 
+						{
+							for(int l=0; l < associativity ;l++) 
+							{
+								set[k].block[l].block_write_counter = 0 ;
+								set[k].block[l].block_read_counter = 0 ;
+							}
+						}
+							//printf("\n************   after reset the write and redd counters  at ipoc %d **************\n",ipoc_number);
+							//report();
+							//printf("  %lld/%lld   ", set[k].block[l].read_counter, set[k].block[l].write_counter);
+						ipoc_duration[m] = 1;
+						
+						
+						
+						
+start = system_time();
+for(int i=0 ; i<associativity ; i++) {
+	
+	if ( (system_time() - start) < epoch_size_sec )
+	{
+		
+						
+						
+if( strcmp(name,"L3") == 0 )
+{						
+	for(int i=0 ; i<associativity ; i++) {
+			if(addr@tag==set[addr@set].block[i].tag && set[addr@set].block[i].valid) {
+				block_index = i;
+				
+				
+				
+				
+	function search(_address addr): int {
+		int index = -1;
+		for( int i=0; i<number_of_sets; i++) {
+			//for( int j=0; j<associativity; j++) {
+				//if(!set[i].block[j].valid) {
+				//if(!set[i].block[j].set_LRblock_lock) {
+				if(!set[i].set_LRblock_lock) {	
+					
+					if( i != addr@set ){
+						
+						for( int j=0; j<associativity; j++) {
+							
+							if(set[i].block[j].counter < max) {
+								
+								index=j;
+								min=set[i].block[j].counter;
+							}
+							return i;
+					}
+				}
+		}
+		uint32 max=0;
+		for( int j=0; j<associativity; j++) {
+			if(set[addr@set].block[j].counter>max) {
+				index=j;
+				max=set[addr@set].block[j].counter;
+			}
+		}
+		return index;
+		
+		
+		
+function extract_setIndex
