@@ -1,4 +1,4 @@
-# Sharif_M.Sc._Thesis
+# M.Sc. Thesis Sharif University of technology 
 M.Sc. thesis, Sharif University of Technology, 2013
 
 
