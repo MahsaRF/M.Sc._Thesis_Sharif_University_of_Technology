@@ -11,6 +11,6 @@ ABSTRACT
     For lower-level caches with relative large cache capacity, we propose a run-time strategy for managing writes between portions of the cache with different retention characteristics so as to maximize the performance and power benefits. A novel contribution, low-overhead and fully-hardware technique is utilized to detect write-intensive data blocks of working set during system operation. This proposal is one year research project.
 Keywords – Spin torque transfer RAM, Retention time, Hybrid cache architecture, Power consumption, Performance.
 
-
+Caching techniques have been an efficient mechanism for mitigating the effects of the processor-memory speed gap. Traditional multi-level SRAM-based cache hierarchies, especially in the context of chip multiprocessors (CMPs), present many challenges in area requirements, power consumption, and design complexity. New advancements in technology enable caches to be built 
 Mahsa Rezaei Firuzkuhi “A high-performance and power-efficient design of processor cache hierarchy using STT-RAM technology with Multi-Retention Time Intervals,” M.Sc. thesis, Sharif University of Technology, 2013
 
